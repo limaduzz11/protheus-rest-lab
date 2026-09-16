@@ -4,50 +4,50 @@
 | Func:  HttpClientPost()
 | Autor: Eduardo Paranhos
 | Data:  10/08/2026
-| Desc:  Exemplo de envio de dados via HTTP POST com corpo JSON
+| Desc:  Exemplo de envio de dados via HTTP POST com FWRest e JSON
 | Obs.:  Exemplo educacional — endpoints e dados ficticios
 *---------------------------------------------------------------------*/
 
 User Function HttpClientPost()
 
-    Local oHttp := FWHttpRest():New("https://api.exemplo.com/pedidos")
+    Local oRest     := FWRest():New("https://api.exemplo.com")
+    Local aHeader   := {}
     Local oJsonBody := JsonObject():New()
     Local cResponse := ""
-    Local oJsonResp
-    Local nPedido := 0
+    Local oJsonResp := JsonObject():New()
+    Local cPedidoId := ""
 
-    // Constroi corpo JSON
-    oJsonBody:SetProperty("cliente_id", "CLI-12345")
-    oJsonBody:SetProperty("data", DtoS(Date()))
-    oJsonBody:SetProperty("valor_total", 1500.00)
-    oJsonBody:SetProperty("observacao", "Pedido de exemplo via ADVPL")
+    // Define recurso
+    oRest:SetPath("/pedidos")
 
-    // Adiciona itens (array)
-    oJsonBody:SetProperty("itens", JsonArray():New())
+    // Monta cabecalhos
+    AAdd(aHeader, "Content-Type: application/json; charset=utf-8")
+    AAdd(aHeader, "Accept: application/json")
+    AAdd(aHeader, "Authorization: Bearer {seu-token-aqui}")
 
-    // Configura headers
-    oHttp:SetHeader("Content-Type", "application/json")
-    oHttp:SetHeader("Accept", "application/json")
-    oHttp:SetHeader("Authorization", "Bearer {seu-token-aqui}")
+    // Constroi corpo JSON nativo
+    oJsonBody["cliente_id"]  := "CLI-12345"
+    oJsonBody["data"]        := DtoS(Date())
+    oJsonBody["valor_total"] := 1500.00
+    oJsonBody["observacao"]  := "Pedido de exemplo via ADVPL FWRest"
+    oJsonBody["itens"]       := {}
 
-    // Define body como JSON string
-    oHttp:SetPostParams(oJsonBody:ToJson())
+    // Configura payload no FWRest
+    oRest:SetPostParams(oJsonBody:ToJson())
 
     // Executa POST
-    oHttp:Post()
+    If oRest:Post(aHeader)
+        cResponse := oRest:GetResult()
 
-    // Trata resposta
-    If oHttp:GetStatus() == 201
-        cResponse := oHttp:GetResult()
-        oJsonResp := JsonObject():New()
-        oJsonResp:FromJson(cResponse)
-
-        nPedido := oJsonResp:GetProperty("pedido_id"):GetNumber()
-        ConOut("Pedido criado com sucesso! ID: " + cValToChar(nPedido))
-    ElseIf oHttp:GetStatus() == 422
-        ConOut("Erro de validacao: " + oHttp:GetResult())
+        If oJsonResp:FromJson(cResponse) == Nil .And. oJsonResp:HasProperty("pedido_id")
+            cPedidoId := cValToChar(oJsonResp["pedido_id"])
+            ConOut("[HttpClientPost] Pedido criado com sucesso! ID: " + cPedidoId)
+        Else
+            ConOut("[HttpClientPost] Resposta recebida: " + cResponse)
+        EndIf
     Else
-        ConOut("Erro HTTP: " + cValToChar(oHttp:GetStatus()))
+        ConOut("[HttpClientPost] Falha HTTP: " + cValToChar(oRest:GetHTTPCode()))
+        ConOut("[HttpClientPost] Erro: " + oRest:GetLastError())
     EndIf
 
 Return

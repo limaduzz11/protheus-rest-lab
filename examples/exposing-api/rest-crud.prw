@@ -1,170 +1,227 @@
 #include "protheus.ch"
+#include "restful.ch"
+#include "topconn.ch"
 
 /*--------------------------------------------------------------------*
 | Func:  RestCrud()
 | Autor: Eduardo Paranhos
 | Data:  10/08/2026
-| Desc:  Exemplo de CRUD REST completo para tabela generica (ZZ1)
-|        Configurar WSOBJ com path "/api/exemplo/produtos"
-| Obs.:  Exemplo educacional — tabela e dados ficticios
+| Desc:  Exemplo de CRUD REST completo com WSRESTFUL e JsonObject nativo
+|        Path configurado: "/api/exemplo/produtos"
+| Obs.:  Exemplo educacional para tabela generica ZZ1
 *---------------------------------------------------------------------*/
 
-WSRESTFUL RestCrud Description "CRUD de produtos — exemplo educacional"
+WSRESTFUL RestCrud DESCRIPTION "CRUD de produtos — exemplo educacional" FORMAT APPLICATION_JSON
 
-    WsMethod GET Description "Lista todos ou busca por ID"
-    WsMethod POST Description "Cria novo produto"
-    WsMethod PUT Description "Atualiza produto existente"
-    WsMethod DELETE Description "Remove produto"
+    WSDATA id AS CHARACTER OPTIONAL
 
-ENDWSRESTFUL
+    WSMETHOD GET DESCRIPTION "Lista todos os produtos ou busca por ID" WSSYNTAX "/api/exemplo/produtos || /api/exemplo/produtos/{id}"
+    WSMETHOD POST DESCRIPTION "Cria novo produto" WSSYNTAX "/api/exemplo/produtos"
+    WSMETHOD PUT DESCRIPTION "Atualiza produto existente" WSSYNTAX "/api/exemplo/produtos/{id}"
+    WSMETHOD DELETE DESCRIPTION "Remove produto" WSSYNTAX "/api/exemplo/produtos/{id}"
+
+END WSRESTFUL
 
 /*--------------------------------------------------------------------*
-| GET — Lista produtos ou busca por ID no path
+| GET — Lista produtos ou busca por ID
 *---------------------------------------------------------------------*/
-WSMETHOD GET WsReceive QUERY WsService RestCrud
+WSMETHOD GET WSRECEIVE id WSSERVICE RestCrud
 
-    Local cId := WsGetUrlParam("id")
+    Local cAlias    := GetNextAlias()
+    Local cQuery    := ""
     Local oResponse := JsonObject():New()
     Local aProdutos := {}
     Local oProduto
+    Local cId       := ""
 
-    If !Empty(cId)
-        // Busca produto especifico
-        DbSelectArea("ZZ1")
-        DbSetOrder(1) // ZZ1_FILIAL + ZZ1_CODIGO
-        If DbSeek(xFilial("ZZ1") + cId)
-            oProduto := JsonObject():New()
-            oProduto:SetProperty("id", AllTrim(ZZ1->ZZ1_CODIGO))
-            oProduto:SetProperty("nome", AllTrim(ZZ1->ZZ1_DESC))
-            oProduto:SetProperty("preco", ZZ1->ZZ1_PRECO)
-            oResponse:SetProperty("produto", oProduto)
-        Else
-            WsSetResponse(404, "application/json", '{ "erro": "Produto nao encontrado" }')
-            Return .T.
-        EndIf
-    Else
-        // Lista produtos (limitado a 100 para performance)
-        DbSelectArea("ZZ1")
-        DbSetOrder(1)
-        DbGoTop()
-        While !Eof() .And. Len(aProdutos) < 100
-            oProduto := JsonObject():New()
-            oProduto:SetProperty("id", AllTrim(ZZ1->ZZ1_CODIGO))
-            oProduto:SetProperty("nome", AllTrim(ZZ1->ZZ1_DESC))
-            oProduto:SetProperty("preco", ZZ1->ZZ1_PRECO)
-            AAdd(aProdutos, oProduto)
-            DbSkip()
-        EndDo
-        oResponse:SetProperty("total", Len(aProdutos))
-        oResponse:SetProperty("produtos", aProdutos)
+    ::SetContentType("application/json")
+
+    If ValType(::id) == "C"
+        cId := AllTrim(::id)
+    ElseIf Len(::aURLParms) >= 1
+        cId := AllTrim(::aURLParms[1])
     EndIf
 
-    WsSetResponse(200, "application/json", oResponse:ToJson())
+    cQuery := "SELECT ZZ1_CODIGO, ZZ1_DESC, ZZ1_PRECO "
+    cQuery += "  FROM " + RetSqlName("ZZ1") + " ZZ1 "
+    cQuery += " WHERE ZZ1.ZZ1_FILIAL = '" + xFilial("ZZ1") + "' "
+    cQuery += "   AND ZZ1.D_E_L_E_T_ = ' ' "
+    If !Empty(cId)
+        cQuery += "   AND ZZ1.ZZ1_CODIGO = '" + cId + "' "
+    EndIf
+    cQuery += " ORDER BY ZZ1.ZZ1_CODIGO "
+    cQuery := ChangeQuery(cQuery)
+
+    TCQuery cQuery New Alias (cAlias)
+
+    While !(cAlias)->(Eof())
+        oProduto := JsonObject():New()
+        oProduto["id"]    := AllTrim((cAlias)->ZZ1_CODIGO)
+        oProduto["nome"]  := AllTrim((cAlias)->ZZ1_DESC)
+        oProduto["preco"] := (cAlias)->ZZ1_PRECO
+        AAdd(aProdutos, oProduto)
+        (cAlias)->(DbSkip())
+    EndDo
+    (cAlias)->(DbCloseArea())
+
+    If !Empty(cId) .And. Len(aProdutos) == 0
+        SetRestFault(404, "Produto nao encontrado")
+        Return .F.
+    EndIf
+
+    If !Empty(cId)
+        oResponse["produto"] := aProdutos[1]
+    Else
+        oResponse["total"]    := Len(aProdutos)
+        oResponse["produtos"] := aProdutos
+    EndIf
+
+    ::SetResponse(oResponse:ToJson())
 
 Return .T.
 
 /*--------------------------------------------------------------------*
 | POST — Cria novo produto
 *---------------------------------------------------------------------*/
-WSMETHOD POST WsReceive JSON WsService RestCrud
+WSMETHOD POST WSSERVICE RestCrud
 
-    Local oBody := JsonObject():New()
+    Local oBody     := JsonObject():New()
     Local oResponse := JsonObject():New()
-    Local cCodigo := ""
+    Local cCodigo   := ""
+    Local cNome     := ""
+    Local nPreco    := 0
+    Local cContent  := ::GetContent()
 
-    oBody:FromJson(WsGetPostContent())
+    ::SetContentType("application/json")
 
-    // Valida campos obrigatorios
-    If oBody:GetProperty("nome") == Nil
-        WsSetResponse(422, "application/json", '{ "erro": "Campo nome obrigatorio" }')
-        Return .T.
+    If Empty(cContent) .Or. oBody:FromJson(cContent) != Nil
+        SetRestFault(400, "Payload JSON invalido")
+        Return .F.
     EndIf
 
-    // Gera codigo automatico (exemplo simples)
-    cCodigo := "PROD" + StrZero(Val(DtoS(Date())), 6)
-
-    // Insere na tabela
-    DbSelectArea("ZZ1")
-    RecLock("ZZ1", .T.)
-    ZZ1->ZZ1_FILIAL := xFilial("ZZ1")
-    ZZ1->ZZ1_CODIGO := cCodigo
-    ZZ1->ZZ1_DESC   := oBody:GetProperty("nome"):GetString()
-
-    If oBody:GetProperty("preco") != Nil
-        ZZ1->ZZ1_PRECO := oBody:GetProperty("preco"):GetNumber()
+    If !oBody:HasProperty("nome") .Or. Empty(oBody["nome"])
+        SetRestFault(422, "Campo 'nome' e obrigatorio")
+        Return .F.
     EndIf
 
-    MsUnLock()
+    cNome := oBody["nome"]
+    If oBody:HasProperty("preco")
+        nPreco := oBody["preco"]
+    EndIf
 
-    oResponse:SetProperty("id", cCodigo)
-    oResponse:SetProperty("mensagem", "Produto criado com sucesso")
-    WsSetResponse(201, "application/json", oResponse:ToJson())
+    Begin Transaction
+        cCodigo := GetSxeNum("ZZ1", "ZZ1_CODIGO")
+
+        DbSelectArea("ZZ1")
+        DbSetOrder(1) // ZZ1_FILIAL + ZZ1_CODIGO
+
+        RecLock("ZZ1", .T.)
+        ZZ1->ZZ1_FILIAL := xFilial("ZZ1")
+        ZZ1->ZZ1_CODIGO := cCodigo
+        ZZ1->ZZ1_DESC   := cNome
+        ZZ1->ZZ1_PRECO  := nPreco
+        MsUnlock()
+
+        ConfirmSX8()
+    End Transaction
+
+    oResponse["id"]       := cCodigo
+    oResponse["mensagem"] := "Produto criado com sucesso"
+
+    ::SetResponse(oResponse:ToJson())
 
 Return .T.
 
 /*--------------------------------------------------------------------*
 | PUT — Atualiza produto existente
 *---------------------------------------------------------------------*/
-WSMETHOD PUT WsReceive JSON WsService RestCrud
+WSMETHOD PUT WSRECEIVE id WSSERVICE RestCrud
 
-    Local cId := WsGetUrlParam("id")
-    Local oBody := JsonObject():New()
+    Local oBody     := JsonObject():New()
     Local oResponse := JsonObject():New()
+    Local cId       := ""
+    Local cContent  := ::GetContent()
 
-    If Empty(cId)
-        WsSetResponse(400, "application/json", '{ "erro": "ID do produto nao informado" }')
-        Return .T.
+    ::SetContentType("application/json")
+
+    If ValType(::id) == "C"
+        cId := AllTrim(::id)
+    ElseIf Len(::aURLParms) >= 1
+        cId := AllTrim(::aURLParms[1])
     EndIf
 
-    oBody:FromJson(WsGetPostContent())
+    If Empty(cId)
+        SetRestFault(400, "ID do produto nao informado na URL")
+        Return .F.
+    EndIf
+
+    If Empty(cContent) .Or. oBody:FromJson(cContent) != Nil
+        SetRestFault(400, "Payload JSON invalido")
+        Return .F.
+    EndIf
 
     DbSelectArea("ZZ1")
     DbSetOrder(1)
 
-    If DbSeek(xFilial("ZZ1") + cId)
-        RecLock("ZZ1", .F.)
-
-        If oBody:GetProperty("nome") != Nil
-            ZZ1->ZZ1_DESC := oBody:GetProperty("nome"):GetString()
-        EndIf
-        If oBody:GetProperty("preco") != Nil
-            ZZ1->ZZ1_PRECO := oBody:GetProperty("preco"):GetNumber()
-        EndIf
-
-        MsUnLock()
-
-        oResponse:SetProperty("id", cId)
-        oResponse:SetProperty("mensagem", "Produto atualizado com sucesso")
-        WsSetResponse(200, "application/json", oResponse:ToJson())
-    Else
-        WsSetResponse(404, "application/json", '{ "erro": "Produto nao encontrado" }')
+    If !DbSeek(xFilial("ZZ1") + cId)
+        SetRestFault(404, "Produto nao encontrado")
+        Return .F.
     EndIf
+
+    Begin Transaction
+        RecLock("ZZ1", .F.)
+        If oBody:HasProperty("nome")
+            ZZ1->ZZ1_DESC := oBody["nome"]
+        EndIf
+        If oBody:HasProperty("preco")
+            ZZ1->ZZ1_PRECO := oBody["preco"]
+        EndIf
+        MsUnlock()
+    End Transaction
+
+    oResponse["id"]       := cId
+    oResponse["mensagem"] := "Produto atualizado com sucesso"
+
+    ::SetResponse(oResponse:ToJson())
 
 Return .T.
 
 /*--------------------------------------------------------------------*
 | DELETE — Remove produto
 *---------------------------------------------------------------------*/
-WSMETHOD DELETE WsReceive EMPTY WsService RestCrud
+WSMETHOD DELETE WSRECEIVE id WSSERVICE RestCrud
 
-    Local cId := WsGetUrlParam("id")
+    Local oResponse := JsonObject():New()
+    Local cId       := ""
+
+    ::SetContentType("application/json")
+
+    If ValType(::id) == "C"
+        cId := AllTrim(::id)
+    ElseIf Len(::aURLParms) >= 1
+        cId := AllTrim(::aURLParms[1])
+    EndIf
 
     If Empty(cId)
-        WsSetResponse(400, "application/json", '{ "erro": "ID do produto nao informado" }')
-        Return .T.
+        SetRestFault(400, "ID do produto nao informado na URL")
+        Return .F.
     EndIf
 
     DbSelectArea("ZZ1")
     DbSetOrder(1)
 
-    If DbSeek(xFilial("ZZ1") + cId)
+    If !DbSeek(xFilial("ZZ1") + cId)
+        SetRestFault(404, "Produto nao encontrado")
+        Return .F.
+    EndIf
+
+    Begin Transaction
         RecLock("ZZ1", .F.)
         DbDelete()
-        MsUnLock()
+        MsUnlock()
+    End Transaction
 
-        WsSetResponse(200, "application/json", '{ "mensagem": "Produto removido com sucesso" }')
-    Else
-        WsSetResponse(404, "application/json", '{ "erro": "Produto nao encontrado" }')
-    EndIf
+    oResponse["mensagem"] := "Produto removido com sucesso"
+    ::SetResponse(oResponse:ToJson())
 
 Return .T.

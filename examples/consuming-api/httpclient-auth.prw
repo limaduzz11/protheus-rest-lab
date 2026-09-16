@@ -4,7 +4,7 @@
 | Func:  HttpClientAuth()
 | Autor: Eduardo Paranhos
 | Data:  10/08/2026
-| Desc:  Exemplo de autenticacao — Basic Auth e OAuth2 Client Credentials
+| Desc:  Exemplo de autenticacao via FWRest — Basic Auth e OAuth2 Client Credentials
 | Obs.:  Exemplo educacional — endpoints e dados ficticios
 *---------------------------------------------------------------------*/
 
@@ -25,19 +25,21 @@ Return
 *---------------------------------------------------------------------*/
 Static Function BasicAuthExample()
 
-    Local oHttp := FWHttpRest():New("https://api.exemplo.com/status")
-    Local cUser := "usuario_api"
-    Local cPass := "senha_api"
-    Local cAuth := Encode64(cUser + ":" + cPass)
+    Local oRest   := FWRest():New("https://api.exemplo.com")
+    Local aHeader := {}
+    Local cUser   := "usuario_api"
+    Local cPass   := "senha_api"
+    Local cAuth   := Encode64(cUser + ":" + cPass)
 
-    oHttp:SetHeader("Authorization", "Basic " + cAuth)
-    oHttp:SetHeader("Accept", "application/json")
-    oHttp:Get()
+    oRest:SetPath("/status")
 
-    If oHttp:GetStatus() == 200
-        ConOut("Autenticado com sucesso via Basic Auth")
-    ElseIf oHttp:GetStatus() == 401
-        ConOut("Falha na autenticacao — credenciais invalidas")
+    AAdd(aHeader, "Authorization: Basic " + cAuth)
+    AAdd(aHeader, "Accept: application/json")
+
+    If oRest:Get(aHeader)
+        ConOut("[BasicAuthExample] Autenticado com sucesso via Basic Auth")
+    Else
+        ConOut("[BasicAuthExample] Falha HTTP: " + cValToChar(oRest:GetHTTPCode()))
     EndIf
 
 Return
@@ -47,41 +49,50 @@ Return
 *---------------------------------------------------------------------*/
 Static Function OAuth2Example()
 
-    Local oHttp := FWHttpRest():New("https://auth.exemplo.com/oauth/token")
+    Local oRestAuth := FWRest():New("https://auth.exemplo.com")
+    Local aHeader   := {}
+    Local cBody     := ""
     Local cResponse := ""
-    Local oJson
-    Local cToken := ""
-    Local oHttpApi
+    Local oJson     := JsonObject():New()
+    Local cToken    := ""
+    Local oRestApi
+    Local aApiHead  := {}
 
-    // Prepara corpo da requisicao de token
-    oHttp:SetHeader("Content-Type", "application/x-www-form-urlencoded")
+    oRestAuth:SetPath("/oauth/token")
 
-    // Monta parametros no formato form-urlencoded
-    oHttp:SetPostParams("grant_type=client_credentials" + ;
-                        "&client_id=seu_client_id" + ;
-                        "&client_secret=seu_client_secret" + ;
-                        "&scope=read write")
+    AAdd(aHeader, "Content-Type: application/x-www-form-urlencoded")
+    AAdd(aHeader, "Accept: application/json")
 
-    oHttp:Post()
+    cBody := "grant_type=client_credentials" + ;
+             "&client_id=seu_client_id" + ;
+             "&client_secret=seu_client_secret" + ;
+             "&scope=read write"
 
-    If oHttp:GetStatus() == 200
-        cResponse := oHttp:GetResult()
-        oJson := JsonObject():New()
-        oJson:FromJson(cResponse)
+    oRestAuth:SetPostParams(cBody)
 
-        cToken := oJson:GetProperty("access_token"):GetString()
-        ConOut("Token obtido: " + SubStr(cToken, 1, 20) + "...")
+    If oRestAuth:Post(aHeader)
+        cResponse := oRestAuth:GetResult()
 
-        // Usa o token em chamada subsequente
-        oHttpApi := FWHttpRest():New("https://api.exemplo.com/dados")
-        oHttpApi:SetHeader("Authorization", "Bearer " + cToken)
-        oHttpApi:Get()
+        If oJson:FromJson(cResponse) == Nil .And. oJson:HasProperty("access_token")
+            cToken := oJson["access_token"]
+            ConOut("[OAuth2Example] Token obtido: " + SubStr(cToken, 1, 15) + "...")
 
-        If oHttpApi:GetStatus() == 200
-            ConOut("Chamada autenticada com sucesso!")
+            // Chamada subsequente autenticada com Bearer token
+            oRestApi := FWRest():New("https://api.exemplo.com")
+            oRestApi:SetPath("/dados")
+
+            AAdd(aApiHead, "Authorization: Bearer " + cToken)
+            AAdd(aApiHead, "Accept: application/json")
+
+            If oRestApi:Get(aApiHead)
+                ConOut("[OAuth2Example] Chamada autenticada com sucesso! Resposta: " + SubStr(oRestApi:GetResult(), 1, 80))
+            Else
+                ConOut("[OAuth2Example] Falha na API: " + cValToChar(oRestApi:GetHTTPCode()))
+            EndIf
         EndIf
     Else
-        ConOut("Erro ao obter token: " + cValToChar(oHttp:GetStatus()))
+        ConOut("[OAuth2Example] Erro ao obter token: " + cValToChar(oRestAuth:GetHTTPCode()))
+        ConOut("[OAuth2Example] Detalhe: " + oRestAuth:GetLastError())
     EndIf
 
 Return

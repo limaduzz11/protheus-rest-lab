@@ -8,7 +8,7 @@
 
 A curated laboratory and architectural reference for developing, consuming, and testing **RESTful Web Services** within the **TOTVS Protheus ERP** environment using **ADVPL** and **TL++**.
 
-Covers inbound endpoint hosting (`WSRESTFUL` / `WSOBJ`), outbound HTTP consumption (`FWHttpRest`), robust JSON serialization (`JsonObject`), HTTP status standards, and database persistence.
+Covers inbound endpoint hosting (`WSRESTFUL` / `restful.ch`), outbound HTTP consumption (`FWRest`), robust JSON serialization (`JsonObject`), HTTP status standards, and database persistence.
 
 ---
 
@@ -27,27 +27,27 @@ sequenceDiagram
     autonumber
     actor Client as External Client (cURL / Postman / Integration Bus)
     participant AppServer as Protheus AppServer (REST Worker / Port 8084)
-    participant WS as WSRESTFUL / WSOBJ Service (rest-crud.prw)
+    participant WS as WSRESTFUL Service (rest-crud.prw)
     participant Model as ADVPL Logic / RecLock / ExecAuto
     participant DBAccess as TOTVS DBAccess / TopConnect
-    participant DB as Microsoft SQL Server
+    participant DB as Relational Database (SQL Server / Oracle / PostgreSQL)
 
     Client->>AppServer: HTTP POST /api/exemplo/produtos (JSON payload)
     Note over AppServer: Reads appserver.ini [HTTPREST]<br/>Allocates worker thread
     AppServer->>WS: Dispatches to WSMETHOD POST
-    WS->>WS: Parse payload via JsonObject:FromJson()
+    WS->>WS: Parse payload via JsonObject:FromJson(::GetContent())
     
     alt Missing mandatory field ("nome")
-        WS-->>Client: HTTP 422 Unprocessable Entity {"erro": "Campo nome obrigatorio"}
+        WS-->>Client: SetRestFault(422, "Campo nome e obrigatorio")
     else Payload Valid
         WS->>Model: Formulate record insertion (ZZ1_CODIGO, ZZ1_DESC, ZZ1_PRECO)
-        Model->>DBAccess: RecLock("ZZ1", .T.) + DbCommit()
+        Model->>DBAccess: Begin Transaction + RecLock("ZZ1", .T.) + MsUnlock()
         DBAccess->>DB: INSERT INTO ZZ1010 (ZZ1_FILIAL, ZZ1_CODIGO, ...)
         DB-->>DBAccess: Commit OK (201 Created)
         DBAccess-->>Model: Success acknowledgement
-        Model-->>WS: Unlocks record (MsUnLock)
-        WS->>WS: Build response JsonObject {"id": "PROD000001", "mensagem": "..."}
-        WS->>AppServer: WsSetResponse(201, "application/json", ToJson())
+        Model-->>WS: Confirms transaction (ConfirmSX8)
+        WS->>WS: Build response JsonObject {"id": "000001", "mensagem": "..."}
+        WS->>AppServer: ::SetResponse(oResponse:ToJson())
         AppServer-->>Client: HTTP/1.1 201 Created (JSON Response)
     end
 ```
@@ -57,19 +57,19 @@ sequenceDiagram
 ## Architectural Patterns
 
 ### 1. Inbound REST Services (Exposing APIs)
-- Hosted natively by the Protheus AppServer via `[HTTPREST]` service engine.
+- Hosted natively by the Protheus AppServer via `[HTTPREST]` service engine using `#include "restful.ch"`.
 - Implemented using `WSRESTFUL` definitions with granular `WSMETHOD` mappings (`GET`, `POST`, `PUT`, `DELETE`).
-- Explicit routing through `WsGetUrlParam()`, `WsGetPostContent()`, and status control via `WsSetResponse()`.
+- Canonical routing through `::id`, `::aURLParms`, `::GetContent()`, `::SetContentType()`, and status control via `::SetResponse()` / `SetRestFault()`.
 
 ### 2. Outbound REST Services (Consuming External APIs)
-- Built on `FWHttpRest()` and `FWRest()` native classes.
-- Full support for TLS/HTTPS negotiation, custom header injection, and query parameter chaining.
+- Built on the official `FWRest()` native class.
+- Full support for TLS/HTTPS negotiation, custom header injection, and query parameter chaining via `SetPath()`.
 - Multi-scheme authentication handling (HTTP Basic Auth, OAuth2 Bearer Tokens).
 
 ### 3. Data Transformation & Serialization
 - Safe parsing and extraction utilizing `JsonObject():New()`.
-- Explicit type casting (`GetString()`, `GetNumber()`, `GetArray()`).
-- Defense against null pointer panics and memory leaks in worker threads.
+- Native bracket syntax (`oJson["chave"] := valor`, `xValor := oJson["chave"]`) and `HasProperty()`.
+- Defense against unhandled errors via `Begin Sequence` / `Recover` and safe validation.
 
 ---
 
