@@ -6,6 +6,12 @@
 [![Database](https://img.shields.io/badge/Database-SQL%20Server-CC292B?style=flat&logo=microsoftsqlserver&logoColor=white)](https://www.microsoft.com/sql-server)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+<br />
+
+**English** &nbsp;|&nbsp; [Português (Brasil)](README.pt-BR.md)
+
+<br />
+
 A curated laboratory and architectural reference for developing, consuming, and testing **RESTful Web Services** within the **TOTVS Protheus ERP** environment using **ADVPL** and **TL++**.
 
 Covers inbound endpoint hosting (`WSRESTFUL` / `restful.ch`), outbound HTTP consumption (`FWRest`), robust JSON serialization (`JsonObject`), HTTP status standards, and database persistence.
